@@ -1,202 +1,248 @@
+import os
+import difflib
 import streamlit as st
-import time
-import random
-import re
+from dotenv import load_dotenv
 
-# ==========================================
-# 🧠 PART 1: The Agent Logic (Backend)
-# ==========================================
+from bughound_agent import BugHoundAgent
+from llm_client import GeminiClient, MockClient
 
-class BugHoundAgent:
-    """
-    The 'Brain' of the operation. 
-    """
-    def __init__(self):
-        self.logs = [] # Memory of the agent's thought process
+# ----------------------------
+# App setup
+# ----------------------------
+st.set_page_config(page_title="BugHound", page_icon="🐶", layout="wide")
+st.title("🐶 BugHound")
+st.caption("A tiny agent that analyzes code, proposes a fix, and runs simple reliability checks.")
 
-    def log_thought(self, step, message):
-        """Records the agent's reasoning steps."""
-        timestamp = time.strftime("%H:%M:%S")
-        entry = f"[{timestamp}] **{step}**: {message}"
-        self.logs.append(entry)
-        # Streamlit simulation of "thinking time"
-        time.sleep(0.5) 
+# Load environment variables from .env if present
+load_dotenv()
 
-    def analyze_code(self, code_snippet):
-        """
-        Step 1: Retrieval & Analysis
-        Currently uses Regex heuristics.
-        """
-        self.log_thought("PLAN", "Scanning code for syntax patterns and potential risks...")
-        
-        issues = []
-        
-        # 1. Check for print statements (Production cleanliness)
-        if "print(" in code_snippet:
-            issues.append({
-                "type": "Code Quality",
-                "severity": "Low",
-                "msg": "Found 'print' statements. In production, use the 'logging' module."
-            })
-            self.log_thought("OBSERVATION", "Detected print statements.")
-
-        # 2. Check for broad exceptions (Reliability)
-        if re.search(r"except\s*:", code_snippet):
-            issues.append({
-                "type": "Reliability",
-                "severity": "High",
-                "msg": "Bare 'except:' clause detected. This hides errors. Specify the Exception type."
-            })
-            self.log_thought("CRITIQUE", "Found unsafe bare exception handling.")
-
-        # 3. Check for TODOs (Completeness)
-        if "TODO" in code_snippet:
-            issues.append({
-                "type": "Completeness",
-                "severity": "Medium",
-                "msg": "Unresolved 'TODO' comment found."
-            })
-        
-        if not issues:
-            self.log_thought("CONCLUSION", "No heuristic issues found. Code looks ostensibly clean.")
-        
-        return issues
-
-    def generate_fix(self, code_snippet, issues):
-        """
-        Step 2: Action
-        Generates a suggested fix.
-        """
-        self.log_thought("ACT", "Attempting to refactor code based on identified issues...")
-        
-        fixed_code = code_snippet
-        
-        # Simulation of fixing logic
-        if any(i['msg'].startswith("Found 'print'") for i in issues):
-            fixed_code = "# [BugHound] Replaced print with logging\nimport logging\n" + \
-                         fixed_code.replace("print(", "logging.info(")
-        
-        if any(i['msg'].startswith("Bare 'except'") for i in issues):
-            fixed_code = fixed_code.replace("except:", "except Exception as e: # [BugHound] Added specific catch")
-
-        self.log_thought("REFLECT", "Refactoring complete. Ready for review.")
-        return fixed_code
-
-    def validate_fix(self, original_code, fixed_code):
-        """
-        Step 3: Verification (Guardrails)
-        Ensures the fix didn't break everything.
-        """
-        self.log_thought("TEST", "Running simulation tests on the new code...")
-        
-        # Mock Validation Logic
-        score = random.randint(80, 100)
-        success = True
-        
-        if len(fixed_code) < len(original_code):
-            self.log_thought("WARNING", "The fixed code is significantly shorter. Checking for data loss...")
-            score -= 10
-            
-        return success, score
-
-# ==========================================
-# 🖥️ PART 2: The Streamlit UI (Frontend)
-# ==========================================
-
-st.set_page_config(page_title="BugHound 🪲", layout="wide")
-
-st.title("🪲 BugHound: Agentic Debugger")
-st.markdown("""
-**Welcome to Lab 5.** This tool demonstrates an **Agentic Workflow**.
-Instead of just giving an answer, BugHound will:
-1. **Plan** its approach.
-2. **Analyze** your code for specific patterns.
-3. **Act** to generate a fix.
-4. **Reflect** on the quality of the fix.
-""")
-
-# --- Sidebar Controls ---
-st.sidebar.header("⚙️ Agent Settings")
-model_choice = st.sidebar.selectbox("Select Model", ["Simulated Heuristics", "GPT-4o (Placeholder)", "Claude 3.5 (Placeholder)"])
-auto_fix = st.sidebar.checkbox("Auto-apply fixes?", value=False)
-
-# --- Main Input Area ---
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("📝 Input Code")
-    user_code = st.text_area("Paste Python code here:", height=300, value="""
-def calculate_data(data):
+# ----------------------------
+# Helpers
+# ----------------------------
+SAMPLE_SNIPPETS = {
+    "print_spam.py": """def greet(name):
+    print("Hello", name)
+    print("Welcome!")
+    return True
+""",
+    "flaky_try_except.py": """def load_data(path):
     try:
-        # TODO: Implement proper math
-        result = data * 2
-        print(f"Result is {result}")
-        return result
+        data = open(path).read()
     except:
-        print("Something went wrong")
-""")
-    
-    run_btn = st.button("🐕 Unleash the Hound", type="primary")
+        return None
+    return data
+""",
+    "mixed_issues.py": """# TODO: replace with real implementation
+def compute(x, y):
+    print("computing...")
+    try:
+        return x / y
+    except:
+        return 0
+""",
+    "cleanish.py": """import logging
 
-# --- Processing & Output ---
-if run_btn:
-    agent = BugHoundAgent()
-    
-    # 1. The Agent Loop Visualization
-    with col2:
-        st.subheader("🧠 Agent Reasoning")
-        with st.status("BugHound is thinking...", expanded=True) as status:
-            # Phase 1: Analyze
-            issues = agent.analyze_code(user_code)
-            
-            # Phase 2: Fix (if issues exist)
-            fixed_code = user_code
-            if issues:
-                fixed_code = agent.generate_fix(user_code, issues)
-            
-            # Phase 3: Validate
-            valid, confidence = agent.validate_fix(user_code, fixed_code)
-            
-            # Update Status
-            status.update(label="Analysis Complete!", state="complete", expanded=False)
+def add(a, b):
+    logging.info("Adding numbers")
+    return a + b
+""",
+}
 
-        # Show the "Thought Log" (Explainability)
-        with st.expander("View Internal Thought Log", expanded=False):
-            for log in agent.logs:
-                st.markdown(log)
 
-    # 2. Results Display
-    st.divider()
-    
-    # Metrics
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Issues Found", len(issues), delta_color="inverse")
-    m2.metric("Confidence Score", f"{confidence}%")
-    m3.metric("Status", "✅ Fixed" if valid else "⚠️ Review Needed")
+def render_diff(original: str, revised: str) -> str:
+    """Return a unified diff string."""
+    diff_lines = difflib.unified_diff(
+        original.splitlines(),
+        revised.splitlines(),
+        fromfile="original",
+        tofile="fixed",
+        lineterm="",
+    )
+    return "\n".join(diff_lines)
 
-    # Code Comparison
-    st.subheader("🔍 Code Review")
-    
-    if not issues:
-        st.success("No major issues found! Your code is squeaky clean. ✨")
+
+def require_code_input(code: str) -> bool:
+    if not code.strip():
+        st.warning("Paste some code or load a sample snippet to begin.")
+        return False
+    return True
+
+
+# ----------------------------
+# Sidebar controls
+# ----------------------------
+st.sidebar.header("Settings")
+
+mode = st.sidebar.selectbox(
+    "Model mode",
+    [
+        "Heuristic only (no API)",
+        "Gemini (requires API key)",
+    ],
+    help="Heuristic mode runs fully offline. Gemini mode calls the Gemini API for analysis and fix proposal.",
+)
+
+model_name = st.sidebar.selectbox(
+    "Gemini model",
+    ["gemini-2.5-flash", "gemini-2.5-pro"],
+    disabled=(mode != "Gemini (requires API key)"),
+)
+
+temperature = st.sidebar.slider(
+    "Temperature",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.2,
+    step=0.1,
+    disabled=(mode != "Gemini (requires API key)"),
+    help="Lower values tend to be more consistent. Higher values tend to be more creative.",
+)
+
+st.sidebar.divider()
+
+sample_choice = st.sidebar.selectbox(
+    "Load a sample snippet",
+    ["(none)"] + list(SAMPLE_SNIPPETS.keys()),
+)
+
+show_debug = st.sidebar.checkbox("Show debug details", value=False)
+
+# ----------------------------
+# Choose client
+# ----------------------------
+client = None
+client_status = ""
+
+if mode == "Heuristic only (no API)":
+    client = MockClient()
+    client_status = "Using MockClient. No network calls."
+else:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        client = None
+        client_status = "Missing GEMINI_API_KEY. Add it to your .env file to use Gemini mode."
     else:
-        diff_col1, diff_col2 = st.columns(2)
-        with diff_col1:
-            st.markdown("**❌ Issues Detected**")
-            for i in issues:
-                st.error(f"**[{i['type']}]**: {i['msg']}")
-        
-        with diff_col2:
-            st.markdown("**✅ Suggested Fix**")
-            st.code(fixed_code, language="python")
-            
-            if st.button("Copy to Clipboard"):
-                st.toast("Code copied! (Simulated)")
+        client = GeminiClient(model_name=model_name, temperature=temperature)
+        client_status = "Gemini client ready."
 
-# --- Footer / Learning Context ---
-st.divider()
-st.info("""
-Currently, `BugHoundAgent` uses simple `if/else` statements (Heuristics) to find bugs. 
-**Your job is to replace the `analyze_code` and `generate_fix` methods with actual calls to an LLM API.**
-Make the agent *actually* intelligent!
-""")
+st.sidebar.info(client_status)
+
+# ----------------------------
+# Main input
+# ----------------------------
+col_left, col_right = st.columns([1, 1])
+
+with col_left:
+    st.subheader("Input code")
+    if sample_choice != "(none)":
+        default_code = SAMPLE_SNIPPETS[sample_choice]
+    else:
+        default_code = st.session_state.get("code_input", "")
+
+    code_input = st.text_area(
+        "Paste a Python snippet",
+        value=default_code,
+        height=320,
+        placeholder="Paste code here...",
+        label_visibility="collapsed",
+    )
+    st.session_state["code_input"] = code_input
+
+    run_button = st.button("Run BugHound", type="primary", use_container_width=True)
+
+with col_right:
+    st.subheader("Outputs")
+    st.write("Run the workflow to see issues, a proposed fix, and a risk report.")
+
+# ----------------------------
+# Run workflow
+# ----------------------------
+if run_button:
+    if not require_code_input(code_input):
+        st.stop()
+
+    if mode == "Gemini (requires API key)" and client is None:
+        st.error("Gemini mode is selected, but no API key is available.")
+        st.stop()
+
+    agent = BugHoundAgent(client=client)
+
+    with st.spinner("BugHound is sniffing around..."):
+        result = agent.run(code_input)
+
+    issues = result.get("issues", [])
+    fixed_code = result.get("fixed_code", "")
+    risk = result.get("risk", {})
+    logs = result.get("logs", [])
+
+    # Layout for results
+    res_left, res_right = st.columns([1, 1])
+
+    with res_left:
+        st.subheader("Detected issues")
+        if not issues:
+            st.success("No issues detected by the current analyzer.")
+        else:
+            for i, issue in enumerate(issues, start=1):
+                issue_type = issue.get("type", "Issue")
+                severity = issue.get("severity", "Unknown")
+                msg = issue.get("msg", "").strip()
+
+                badge = f"{issue_type} | {severity}"
+                st.markdown(f"**{i}. {badge}**")
+                if msg:
+                    st.write(msg)
+
+    with res_right:
+        st.subheader("Risk report")
+        if not risk:
+            st.info("No risk report was produced.")
+        else:
+            score = risk.get("score", None)
+            level = risk.get("level", "unknown")
+            should_autofix = risk.get("should_autofix", None)
+            reasons = risk.get("reasons", [])
+
+            top_cols = st.columns(3)
+            with top_cols[0]:
+                st.metric("Risk level", str(level).upper())
+            with top_cols[1]:
+                st.metric("Score", "-" if score is None else int(score))
+            with top_cols[2]:
+                st.metric("Auto-fix?", "-" if should_autofix is None else ("YES" if should_autofix else "NO"))
+
+            if reasons:
+                st.write("**Reasons:**")
+                for r in reasons:
+                    st.write(f"- {r}")
+
+    st.divider()
+
+    st.subheader("Proposed fix")
+    if not fixed_code.strip():
+        st.warning("No fix was produced. This can happen if the agent refused or had parsing errors.")
+    else:
+        fix_cols = st.columns([1, 1])
+
+        with fix_cols[0]:
+            st.text_area("Fixed code", value=fixed_code, height=320)
+
+        with fix_cols[1]:
+            diff_text = render_diff(code_input, fixed_code)
+            st.text_area("Diff (unified)", value=diff_text, height=320)
+
+    st.divider()
+
+    st.subheader("Agent trace")
+    if not logs:
+        st.info("No trace logs were produced.")
+    else:
+        for entry in logs:
+            step = entry.get("step", "LOG")
+            message = entry.get("message", "")
+            st.write(f"**{step}:** {message}")
+
+    if show_debug:
+        st.divider()
+        st.subheader("Debug payload")
+        st.json(result)

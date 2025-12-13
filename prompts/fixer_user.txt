@@ -1,0 +1,11 @@
+You are given:
+1) A list of detected issues (JSON)
+2) The original Python code
+
+Rewrite the code to address the issues.
+
+Issues:
+{{ISSUES}}
+
+Original code:
+{{CODE}}

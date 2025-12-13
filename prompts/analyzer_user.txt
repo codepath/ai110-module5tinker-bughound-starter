@@ -1,0 +1,10 @@
+Analyze the following Python code and return a JSON array of issues.
+
+Focus on patterns such as:
+- bare except blocks
+- print statements in non-demo code
+- TODO comments
+- logic that could hide errors
+
+Python code:
+{{CODE}}

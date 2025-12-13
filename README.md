@@ -1,45 +1,109 @@
-# BugHound 🪲
+# 🐶 BugHound
 
-**BugHound** is an "Agentic Debugger" application built with Streamlit. It demonstrates an agentic workflow where an AI agent plans, analyzes code, acts to generate fixes, and reflects on the results.
+BugHound is a small, agent-style debugging tool. It analyzes a Python code snippet, proposes a fix, and runs basic reliability checks before deciding whether the fix is safe to apply automatically.
 
-Currently, this is a **starter project** that uses simulated heuristics (regex and simple logic) to detect bugs. The goal of this project is to eventually replace the simulated logic with actual LLM API calls to make the agent truly intelligent.
+---
 
-## Features
+## What BugHound Does
 
-- **Agent Reasoning Visualization**: Watch the agent "think" as it processes your code.
-- **Heuristic Code Analysis**: Detects common issues like:
-  - `print()` statements (suggests using `logging`).
-  - Bare `except:` clauses (suggests catching specific exceptions).
-  - `TODO` comments.
-- **Automated Fixes**: Generates suggested refactorings for detected issues.
-- **Interactive UI**: Paste your Python code and get instant feedback.
+Given a short Python snippet, BugHound:
 
-## Installation
+1. **Analyzes** the code for potential issues  
+   - Uses heuristics in offline mode  
+   - Uses Gemini when API access is enabled  
 
-1. **Clone the repository** (if you haven't already).
-2. **Install dependencies**: Ensure you have Python installed, then run:
+2. **Proposes a fix**  
+   - Either heuristic-based or LLM-generated  
+   - Attempts minimal, behavior-preserving changes  
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+3. **Assesses risk**  
+   - Scores the fix  
+   - Flags high-risk changes  
+   - Decides whether the fix should be auto-applied or reviewed by a human  
 
-## Usage
+4. **Shows its work**  
+   - Displays detected issues  
+   - Shows a diff between original and fixed code  
+   - Logs each agent step
 
-Run the application using Streamlit:
+---
+
+## Setup
+
+### 1. Create a virtual environment (recommended)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # macOS/Linux
+# or
+.venv\Scripts\activate      # Windows
+```
+
+### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Running in Offline (Heuristic) Mode
+
+No API key required.
 
 ```bash
 streamlit run bughound_app.py
 ```
 
-The app will open in your default web browser.
+In the sidebar, select:
 
-## How it Works
+* **Model mode:** Heuristic only (no API)
 
-The app is split into two parts:
+This mode uses simple pattern-based rules and is useful for testing the workflow without network access.
 
-1. **The Agent Logic (`BugHoundAgent` class)**:
-   - `analyze_code`: Scans the input code for specific patterns.
-   - `generate_fix`: Applies string replacements to fix identified issues.
-   - `validate_fix`: Simulates a testing phase to ensure the fix is safe.
+---
 
-2. **The Streamlit UI**: Provides the interface for inputting code and viewing the agent's logs and results.
+## Running with Gemini
+
+### 1. Set up your API key
+
+Copy the example file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and add your Gemini API key:
+
+```text
+GEMINI_API_KEY=your_real_key_here
+```
+
+### 2. Run the app
+
+```bash
+streamlit run bughound_app.py
+```
+
+In the sidebar, select:
+
+* **Model mode:** Gemini (requires API key)
+* Choose a Gemini model and temperature
+
+BugHound will now use Gemini for analysis and fix generation, while still applying local reliability checks.
+
+---
+
+## Running Tests
+
+Tests focus on **reliability logic** and **agent behavior**, not the UI.
+
+```bash
+pytest
+```
+
+You should see tests covering:
+
+* Risk scoring and guardrails
+* Heuristic fallbacks when LLM output is invalid
+* End-to-end agent workflow shape
