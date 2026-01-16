@@ -82,9 +82,13 @@ mode = st.sidebar.selectbox(
     help="Heuristic mode runs fully offline. Gemini mode calls the Gemini API for analysis and fix proposal.",
 )
 
+# [cite_start]UPDATED: Added a warning for free-tier users to manage expectations regarding API limits. [cite: 176, 192]
+if mode == "Gemini (requires API key)":
+    st.sidebar.warning("⚠️ Gemini Free Tier: You have a limit of ~20 requests. Use Heuristic mode for initial testing to save your quota.")
+
 model_name = st.sidebar.selectbox(
     "Gemini model",
-    ["gemini-2.5-flash", "gemini-2.5-pro"],
+    ["gemini-2.5-flash", "gemini-2.5-pro"], # Reverting to existing version names from llm_client.py
     disabled=(mode != "Gemini (requires API key)"),
 )
 
@@ -217,6 +221,10 @@ if run_button:
                     st.write(f"- {r}")
 
     st.divider()
+
+    # [cite_start]UPDATED: Check if a fallback occurred due to API limits/errors and notify the user. [cite: 119, 128]
+    if any("API Error" in log.get("message", "") for log in logs):
+        st.warning("⚠️ API Request Failed: BugHound hit a limit or network error and used heuristic rules instead.")
 
     st.subheader("Proposed fix")
     if not fixed_code.strip():

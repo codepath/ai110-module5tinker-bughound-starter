@@ -25,7 +25,7 @@ class GeminiClient:
     - GEMINI_API_KEY set in environment (or loaded via python-dotenv)
     """
 
-    def __init__(self, model_name: str = "gemini-1.5-flash", temperature: float = 0.2):
+    def __init__(self, model_name: str = "gemini-2.5-flash", temperature: float = 0.2):
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError(
