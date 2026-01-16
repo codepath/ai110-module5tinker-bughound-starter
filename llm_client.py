@@ -6,10 +6,6 @@ class MockClient:
     """
     Offline stand-in for an LLM client.
     This lets the app run without an API key.
-
-    NOTE: It intentionally returns non-JSON-ish outputs so students can see
-    how the agent falls back to heuristics in analyze(), and how propose_fix()
-    may fall back too.
     """
 
     def complete(self, system_prompt: str, user_prompt: str) -> str:
@@ -22,7 +18,7 @@ class MockClient:
 
 class GeminiClient:
     """
-    Minimal Gemini API wrapper.
+    Minimal Gemini API wrapper with added error resilience.
 
     Requirements:
     - google-generativeai installed
@@ -47,16 +43,23 @@ class GeminiClient:
         """
         Sends a single request to Gemini.
 
-        We use a simple two-part prompt: system + user. If the model returns
-        extra text (like markdown), downstream parsing utilities should handle it.
+        UPDATED: Added try/except to handle rate limits and API errors gracefully.
+        If an error occurs, it returns an empty string, triggering the agent's 
+        heuristic fallback logic.
         """
-        response = self.model.generate_content(
-            [
-                {"role": "system", "parts": [system_prompt]},
-                {"role": "user", "parts": [user_prompt]},
-            ],
-            generation_config={"temperature": self.temperature},
-        )
+        try:
+            response = self.model.generate_content(
+                [
+                    {"role": "system", "parts": [system_prompt]},
+                    {"role": "user", "parts": [user_prompt]},
+                ],
+                generation_config={"temperature": self.temperature},
+            )
 
-        # Defensive: response.text can be None in edge cases.
-        return response.text or ""
+            # Defensive: response.text can be None or raise an error if blocked by filters.
+            return response.text or ""
+            
+        except Exception as e:
+            # Returning empty string allows the agent to detect the failure 
+            # and switch to offline rules.
+            return ""
