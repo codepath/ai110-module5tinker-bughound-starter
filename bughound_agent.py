@@ -18,8 +18,6 @@ class BugHoundAgent:
 
     def __init__(self, client: Optional[Any] = None):
         # client should implement: complete(system_prompt: str, user_prompt: str) -> str
-        # In heuristic-only mode, a MockClient can be passed in, but the agent also
-        # supports running fully via local heuristics.
         self.client = client
         self.logs: List[Dict[str, str]] = []
 
@@ -40,7 +38,6 @@ class BugHoundAgent:
         risk = assess_risk(original_code=code_snippet, fixed_code=fixed_code, issues=issues)
         self._log("TEST", f"Risk assessed as {risk.get('level', 'unknown')} (score={risk.get('score', '-')}).")
 
-        # Optional reflection: for now, treat the risk policy as the final decision.
         if risk.get("should_autofix"):
             self._log("REFLECT", "Fix appears safe enough to auto-apply under current policy.")
         else:
@@ -57,13 +54,6 @@ class BugHoundAgent:
     # Workflow steps
     # ----------------------------
     def analyze(self, code_snippet: str) -> List[Dict[str, str]]:
-        """
-        Returns a list of issues with keys:
-        - type: str
-        - severity: str (Low/Medium/High)
-        - msg: str
-        """
-        # If no LLM client, or if using a MockClient, fall back to heuristics.
         if not self._can_call_llm():
             self._log("ANALYZE", "Using heuristic analyzer (offline mode).")
             return self._heuristic_analyze(code_snippet)
@@ -79,10 +69,15 @@ class BugHoundAgent:
             f"CODE:\n{code_snippet}"
         )
 
-        raw = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        # UPDATED: Added exception handling for API errors/rate limits
+        try:
+            raw = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        except Exception as e:
+            self._log("ANALYZE", f"API Error: {str(e)}. Falling back to heuristics.")
+            return self._heuristic_analyze(code_snippet)
+
         issues = self._parse_json_array_of_issues(raw)
 
-        # If parsing fails, degrade gracefully to heuristics so the lab still works.
         if issues is None:
             self._log("ANALYZE", "LLM output was not parseable JSON. Falling back to heuristics.")
             return self._heuristic_analyze(code_snippet)
@@ -90,9 +85,6 @@ class BugHoundAgent:
         return issues
 
     def propose_fix(self, code_snippet: str, issues: List[Dict[str, str]]) -> str:
-        """
-        Returns a rewritten code snippet as a string.
-        """
         if not issues:
             self._log("ACT", "No issues, returning original code unchanged.")
             return code_snippet
@@ -113,10 +105,15 @@ class BugHoundAgent:
             f"CODE:\n{code_snippet}"
         )
 
-        raw = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        # UPDATED: Added exception handling for API errors/rate limits
+        try:
+            raw = self.client.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+        except Exception as e:
+            self._log("ACT", f"API Error: {str(e)}. Falling back to heuristic fixer.")
+            return self._heuristic_fix(code_snippet, issues)
+
         cleaned = self._strip_code_fences(raw).strip()
 
-        # Safety: if the model returns something empty, fall back to heuristics.
         if not cleaned:
             self._log("ACT", "LLM returned empty output. Falling back to heuristic fixer.")
             return self._heuristic_fix(code_snippet, issues)
@@ -161,36 +158,25 @@ class BugHoundAgent:
     def _heuristic_fix(self, code: str, issues: List[Dict[str, str]]) -> str:
         fixed = code
 
-        # Fix bare except first (high risk).
         if any(i.get("type") == "Reliability" for i in issues):
             fixed = re.sub(r"\bexcept\s*:\s*", "except Exception as e:\n        # [BugHound] log or handle the error\n        ", fixed)
 
-        # Replace print with logging.info (simple, imperfect, good for a tinker).
         if any(i.get("type") == "Code Quality" for i in issues):
             if "import logging" not in fixed:
                 fixed = "import logging\n\n" + fixed
             fixed = fixed.replace("print(", "logging.info(")
 
-        # Leave TODOs as is (a “fix” might be to make TODO visible, not guess intent).
         return fixed
 
     # ----------------------------
     # Parsing + utilities
     # ----------------------------
     def _parse_json_array_of_issues(self, text: str) -> Optional[List[Dict[str, str]]]:
-        """
-        Try to parse a JSON array. If the model outputs extra text, attempt to extract
-        the first JSON array substring.
-        """
         text = text.strip()
-
-        # Fast path: direct JSON
         parsed = self._try_json_loads(text)
         if isinstance(parsed, list):
-            normalized = self._normalize_issues(parsed)
-            return normalized
+            return self._normalize_issues(parsed)
 
-        # Attempt to extract a JSON array from messy output
         array_str = self._extract_first_json_array(text)
         if array_str:
             parsed2 = self._try_json_loads(array_str)
@@ -220,13 +206,9 @@ class BugHoundAgent:
             return None
 
     def _extract_first_json_array(self, s: str) -> Optional[str]:
-        """
-        Best-effort extraction of the first [...] substring that looks like JSON.
-        """
         start = s.find("[")
         if start == -1:
             return None
-
         depth = 0
         for i in range(start, len(s)):
             if s[i] == "[":
@@ -238,11 +220,7 @@ class BugHoundAgent:
         return None
 
     def _strip_code_fences(self, text: str) -> str:
-        """
-        Remove ``` fences if the model includes them anyway.
-        """
         text = text.strip()
-        # Remove triple-backtick fenced blocks, keep inner content.
         match = re.search(r"```(?:python)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
         if match:
             return match.group(1)
