@@ -46,3 +46,38 @@ def test_missing_return_is_penalized():
     )
     assert risk["score"] < 100
     assert any("Return" in r or "return" in r for r in risk["reasons"])
+
+
+def test_structural_change_blocks_autofix_even_when_risk_is_low():
+    """
+    Guardrail: a fix that changes code structure must defer to human review,
+    even if the numeric risk score lands in the "low" band.
+
+    A single low-severity issue plus a bare-except rewrite scores 90 ("low"),
+    which the OLD policy (should_autofix = level == "low") would have
+    auto-applied. The tightened policy must refuse.
+    """
+    original = "def f(x):\n    try:\n        return 1 / x\n    except:\n        return 0\n"
+    fixed = "def f(x):\n    try:\n        return 1 / x\n    except Exception as e:\n        return 0\n"
+    issues = [{"type": "Code Quality", "severity": "Low", "msg": "print"}]
+
+    risk = assess_risk(original_code=original, fixed_code=fixed, issues=issues)
+
+    assert risk["level"] == "low"          # score stays in the low band...
+    assert risk["should_autofix"] is False  # ...but auto-fix is still refused
+    assert any("except" in r.lower() for r in risk["reasons"])
+
+
+def test_low_risk_fix_without_structural_change_still_autofixes():
+    """
+    Counterpart: the tightened gate must not over-block. A low-severity fix
+    that preserves length, returns, and error handling should still auto-apply.
+    """
+    original = "def add(a, b):\n    print('adding')\n    return a + b\n"
+    fixed = "import logging\n\ndef add(a, b):\n    logging.info('adding')\n    return a + b\n"
+    issues = [{"type": "Code Quality", "severity": "Low", "msg": "print"}]
+
+    risk = assess_risk(original_code=original, fixed_code=fixed, issues=issues)
+
+    assert risk["level"] == "low"
+    assert risk["should_autofix"] is True
