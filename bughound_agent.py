@@ -89,6 +89,13 @@ class BugHoundAgent:
             self._log("ANALYZE", "LLM output was not parseable JSON. Falling back to heuristics.")
             return self._heuristic_analyze(code_snippet)
 
+        # Enforce the analyzer contract: every issue must carry a recognized
+        # severity. Unknown severities score 0 risk downstream, so silently
+        # accepting them would understate risk. Reject the whole batch instead.
+        if not self._issues_have_valid_severity(issues):
+            self._log("ANALYZE", "LLM issues had missing/invalid severity. Falling back to heuristics.")
+            return self._heuristic_analyze(code_snippet)
+
         return issues
 
     def propose_fix(self, code_snippet: str, issues: List[Dict[str, str]]) -> str:
@@ -186,6 +193,17 @@ class BugHoundAgent:
                 return self._normalize_issues(parsed2)
 
         return None
+
+    # Severities the analyzer prompt is contracted to emit, and that the risk
+    # assessor actually scores. Anything else is treated as a broken response.
+    _VALID_SEVERITIES = {"low", "medium", "high"}
+
+    def _issues_have_valid_severity(self, issues: List[Dict[str, str]]) -> bool:
+        # An empty list is valid: the model legitimately found no issues.
+        return all(
+            str(issue.get("severity", "")).strip().lower() in self._VALID_SEVERITIES
+            for issue in issues
+        )
 
     def _normalize_issues(self, arr: List[Any]) -> List[Dict[str, str]]:
         issues: List[Dict[str, str]] = []

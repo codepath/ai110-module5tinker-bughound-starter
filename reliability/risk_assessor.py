@@ -49,17 +49,25 @@ def assess_risk(
     # ----------------------------
     # Structural change checks
     # ----------------------------
+    # Track whether the fix altered code structure (length, returns, error
+    # handling). Any such change means a human should confirm behavior was
+    # preserved, even if the numeric score stays in the "low risk" band.
+    structural_change = False
+
     if len(fixed_lines) < len(original_lines) * 0.5:
         score -= 20
+        structural_change = True
         reasons.append("Fixed code is much shorter than original.")
 
     if "return" in original_code and "return" not in fixed_code:
         score -= 30
+        structural_change = True
         reasons.append("Return statements may have been removed.")
 
     if "except:" in original_code and "except:" not in fixed_code:
         # This is usually good, but still risky.
         score -= 5
+        structural_change = True
         reasons.append("Bare except was modified, verify correctness.")
 
     # ----------------------------
@@ -80,7 +88,9 @@ def assess_risk(
     # ----------------------------
     # Auto-fix policy
     # ----------------------------
-    should_autofix = level == "low"
+    # Tightened: auto-apply only when risk is low AND the fix made no
+    # structural changes. A structural edit always defers to human review.
+    should_autofix = level == "low" and not structural_change
 
     if not reasons:
         reasons.append("No significant risks detected.")
