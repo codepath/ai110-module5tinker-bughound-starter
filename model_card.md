@@ -61,17 +61,33 @@ fallback," not a separate code path.
 - Shape: small self-contained functions, typically containing a `try/except`
   block and/or `print` statements.
 
-**Outputs observed (offline run on `compute(x, y)`):**
-- **Detected issues:** `Code Quality | Low` (print statements) and
-  `Reliability | High` (bare `except:`).
-- **Proposed fix:** In offline mode the "fix" was the MockClient placeholder
-  `# MockClient: no rewrite available in offline mode.` — the diff showed the
-  **entire function was deleted**.
-- **Risk report:** score **0**, level **HIGH**, auto-fix **NO**, with reasons:
-  high-severity issue, low-severity issue, fixed code much shorter, returns
-  possibly removed, bare except modified.
-- **Trace:** PLAN → ANALYZE (LLM → fallback) → ACT → TEST (high, score 0) →
-  REFLECT ("not safe enough to auto-apply, human review recommended").
+**Outputs observed (offline `MockClient` run over all four `sample_code/`
+files):**
+
+| File | Issues detected (heuristic) | Score | Level | Auto-fix |
+|------|-----------------------------|-------|-------|----------|
+| `cleanish.py` | *(none)* | 100 | low | **YES** |
+| `print_spam.py` | Code Quality/Low | 45 | medium | no |
+| `flaky_try_except.py` | Reliability/High | 5 | high | no |
+| `mixed_issues.py` | Code Quality/Low, Reliability/High, Maintainability/Medium | 0 | high | no |
+
+Reading the table:
+- **`cleanish.py` is the only case that auto-applies.** It has no issues, so
+  `propose_fix` returns the code unchanged, the risk layer sees an identical
+  program (score 100, no structural flags), and `should_autofix` is `True`.
+  This is the one path where the guardrail correctly says "safe."
+- **The other three are all blocked, but for a revealing reason.** Because
+  `MockClient.complete` returns a non-empty placeholder
+  (`# MockClient: no rewrite available in offline mode.`), the ACT step accepts
+  it as the "fix" — so the diff **deletes the entire function**. The high/medium
+  scores come from that destruction (shorter code, returns removed, bare except
+  modified), *not* from a real evaluation of a real fix. The guardrail reaches
+  the right verdict (don't auto-apply) via the wrong evidence — see failure
+  mode #1.
+- **Trace shape is identical every run:** PLAN → ANALYZE (LLM path → "not
+  parseable JSON" → heuristic fallback) → ACT → TEST → REFLECT. Even
+  `cleanish.py` logs "Using LLM analyzer" first, because `MockClient` satisfies
+  `_can_call_llm()`.
 
 ---
 
@@ -126,10 +142,16 @@ fallback," not a separate code path.
 
 ## 6) Heuristic vs Gemini comparison
 
-- **Heuristics caught consistently (observed):** `print(`, bare `except:`, and
-  `TODO`. Deterministic, no network, but blind to anything outside those three
-  patterns (e.g. resource leaks, mutable default args, swallowed exceptions
-  with logic).
+- **Heuristics caught consistently (observed across all four samples):**
+  `print(` (in `print_spam.py` and `mixed_issues.py`), bare `except:` (in
+  `flaky_try_except.py` and `mixed_issues.py`), and `TODO` (in
+  `mixed_issues.py`). `cleanish.py` correctly produced **zero** issues.
+  Deterministic, no network — but blind to anything outside those three
+  patterns. Concretely, `flaky_try_except.py` leaks a file handle when
+  `f.read()` raises (the `f.close()` never runs) and its `except: return None`
+  swallows the real error; the heuristics flag only the bare except and say
+  nothing about the leak. `print_spam.py`'s issue set (print only) is complete
+  for what the regexes can see, but that is the ceiling of heuristic mode.
 - **Gemini expected to add (predicted):** semantic issues the regexes cannot
   see — e.g. that `except: return 0` *silently hides* a `ZeroDivisionError`,
   unclosed file handles in `open(path).read()`, or missing input validation.
