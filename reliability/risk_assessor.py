@@ -1,4 +1,13 @@
+import ast
 from typing import Dict, List
+
+
+def _parses(code: str) -> bool:
+    try:
+        ast.parse(code)
+        return True
+    except SyntaxError:
+        return False
 
 
 def assess_risk(
@@ -62,6 +71,13 @@ def assess_risk(
         score -= 5
         reasons.append("Bare except was modified, verify correctness.")
 
+    # Only penalize when the fix breaks code that used to parse.
+    fix_parses = True
+    if _parses(original_code) and not _parses(fixed_code):
+        fix_parses = False
+        score -= 50
+        reasons.append("Fixed code does not parse as valid Python.")
+
     # ----------------------------
     # Clamp score
     # ----------------------------
@@ -80,7 +96,7 @@ def assess_risk(
     # ----------------------------
     # Auto-fix policy
     # ----------------------------
-    should_autofix = level == "low"
+    should_autofix = level == "low" and fix_parses
 
     if not reasons:
         reasons.append("No significant risks detected.")

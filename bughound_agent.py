@@ -9,6 +9,10 @@ from reliability.risk_assessor import assess_risk
 PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
 
 
+# Match real print calls only, not identifiers like footprint( or pprint(.
+_PRINT_CALL = re.compile(r"\bprint\(")
+
+
 def _load_prompt(filename: str) -> str:
     """Load a prompt template from the prompts/ folder."""
     path = os.path.join(PROMPTS_DIR, filename)
@@ -83,10 +87,16 @@ class BugHoundAgent:
             self._log("ANALYZE", f"API Error: {str(e)}. Falling back to heuristics.")
             return self._heuristic_analyze(code_snippet)
 
+        self._log("ANALYZE", f"Raw LLM reply: {raw!r}")
+
         issues = self._parse_json_array_of_issues(raw)
 
         if issues is None:
-            self._log("ANALYZE", "LLM output was not parseable JSON. Falling back to heuristics.")
+            self._log(
+                "ANALYZE",
+                "LLM output was unusable (not a JSON array, or no item passed schema validation). "
+                "Falling back to heuristics.",
+            )
             return self._heuristic_analyze(code_snippet)
 
         return issues
@@ -128,7 +138,7 @@ class BugHoundAgent:
     def _heuristic_analyze(self, code: str) -> List[Dict[str, str]]:
         issues: List[Dict[str, str]] = []
 
-        if "print(" in code:
+        if _PRINT_CALL.search(code):
             issues.append(
                 {
                     "type": "Code Quality",
@@ -166,7 +176,7 @@ class BugHoundAgent:
         if any(i.get("type") == "Code Quality" for i in issues):
             if "import logging" not in fixed:
                 fixed = "import logging\n\n" + fixed
-            fixed = fixed.replace("print(", "logging.info(")
+            fixed = _PRINT_CALL.sub("logging.info(", fixed)
 
         return fixed
 
@@ -187,18 +197,32 @@ class BugHoundAgent:
 
         return None
 
-    def _normalize_issues(self, arr: List[Any]) -> List[Dict[str, str]]:
+    VALID_SEVERITIES = {"low": "Low", "medium": "Medium", "high": "High"}
+
+    def _normalize_issues(self, arr: List[Any]) -> Optional[List[Dict[str, str]]]:
+        """
+        Strictly validate model output. Each item needs non-empty string `type` and
+        `msg`, and `severity` in Low/Medium/High (case-insensitive). Invalid items are
+        dropped and logged. If the array is non-empty but nothing is valid, return None
+        so the caller falls back to heuristics. A genuinely empty array is valid.
+        """
         issues: List[Dict[str, str]] = []
         for item in arr:
             if not isinstance(item, dict):
                 continue
-            issues.append(
-                {
-                    "type": str(item.get("type", "Issue")),
-                    "severity": str(item.get("severity", "Unknown")),
-                    "msg": str(item.get("msg", "")).strip(),
-                }
-            )
+            type_ = item.get("type")
+            msg = item.get("msg")
+            severity = self.VALID_SEVERITIES.get(str(item.get("severity", "")).strip().lower())
+            if not (isinstance(type_, str) and type_.strip() and isinstance(msg, str) and msg.strip() and severity):
+                continue
+            issues.append({"type": type_.strip(), "severity": severity, "msg": msg.strip()})
+
+        dropped = len(arr) - len(issues)
+        if arr and not issues:
+            self._log("ANALYZE", f"Schema validation failed: {dropped}/{len(arr)} items invalid.")
+            return None
+        if dropped:
+            self._log("ANALYZE", f"Dropped {dropped} invalid issue item(s) from LLM output.")
         return issues
 
     def _try_json_loads(self, s: str) -> Any:

@@ -46,3 +46,33 @@ def test_missing_return_is_penalized():
     )
     assert risk["score"] < 100
     assert any("Return" in r or "return" in r for r in risk["reasons"])
+
+
+def test_fix_that_does_not_parse_is_penalized_and_not_autofixed():
+    risk = assess_risk(
+        original_code="def f():\n    print('hi')\n    return True\n",
+        fixed_code="def f(:\n    logging.info('hi')\n    return True\n",
+        issues=[{"type": "Code Quality", "severity": "Low", "msg": "print"}],
+    )
+    assert risk["score"] == 45
+    assert risk["should_autofix"] is False
+    assert any("parse" in r for r in risk["reasons"])
+
+
+def test_valid_fix_has_no_parse_penalty():
+    risk = assess_risk(
+        original_code="def f():\n    print('hi')\n    return True\n",
+        fixed_code="def f():\n    logging.info('hi')\n    return True\n",
+        issues=[{"type": "Code Quality", "severity": "Low", "msg": "print"}],
+    )
+    assert not any("parse" in r for r in risk["reasons"])
+    assert risk["should_autofix"] is True
+
+
+def test_unparseable_original_is_not_penalized():
+    risk = assess_risk(
+        original_code="def f(:\n    return 1\n",
+        fixed_code="def f(:\n    return 2\n",
+        issues=[],
+    )
+    assert not any("parse" in r for r in risk["reasons"])
